@@ -1,12 +1,16 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-const TOTAL_DAYS = 25;
 const DEFAULT_YEAR = String(new Date().getFullYear());
 
-const dayNumbers = Array.from({ length: TOTAL_DAYS }, (_, i) => String(i + 1));
+const getDayNumbers = (year) => {
+  const totalDays = Number(year) === 2025 ? 12 : 25;
+  return Array.from({ length: totalDays }, (_, i) => String(i + 1));
+};
 
-const formatCompletionTime = (timestamp) =>
-  new Date(timestamp * 1000).toLocaleString();
+const formatCompletionTime = (timestamp) => {
+  if (!timestamp) return "";
+  return new Date(timestamp * 1000).toLocaleString();
+};
 
 const findDefaultSelection = (leaderboard) => {
   const members = Object.values(leaderboard?.members ?? {});
@@ -33,6 +37,16 @@ const findDefaultSelection = (leaderboard) => {
   };
 };
 
+const findDefaultPlayerId = (leaderboard) => {
+  const players = Object.values(leaderboard?.members ?? {}).map((member) => ({
+    id: String(member.id),
+    name: member.name || `Anonymous #${member.id}`,
+  }));
+
+  players.sort((a, b) => a.name.localeCompare(b.name));
+  return players[0]?.id ?? "";
+};
+
 const buildLeaderboard = (leaderboard, day, part) => {
   if (!leaderboard) return [];
 
@@ -54,6 +68,31 @@ const buildLeaderboard = (leaderboard, day, part) => {
   return rows
     .sort((a, b) => a.timestamp - b.timestamp)
     .map((row, index) => ({ ...row, rank: index + 1 }));
+};
+
+const buildPlayerSubmissions = (leaderboard, playerId, dayNumbers) => {
+  if (!leaderboard || !playerId) return [];
+  const player = Object.values(leaderboard.members ?? {}).find(
+    (member) => String(member.id) === String(playerId)
+  );
+  if (!player) return [];
+
+  const rows = [];
+
+  dayNumbers.forEach((day) => {
+    [1, 2].forEach((part) => {
+      const completion = player.completion_day_level?.[day]?.[String(part)];
+      rows.push({
+        day,
+        part: String(part),
+        completedAt: completion
+          ? formatCompletionTime(completion.get_star_ts)
+          : "Not completed",
+      });
+    });
+  });
+
+  return rows;
 };
 
 const computePartAvailability = (leaderboard) => {
@@ -78,9 +117,13 @@ export default function App() {
   const [sessionToken, setSessionToken] = useState("");
   const [selectedDay, setSelectedDay] = useState("1");
   const [selectedPart, setSelectedPart] = useState("1");
+  const [selectedPlayerId, setSelectedPlayerId] = useState("");
+  const [viewMode, setViewMode] = useState("days");
   const [leaderboard, setLeaderboard] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  const dayNumbers = useMemo(() => getDayNumbers(year), [year]);
 
   const availability = useMemo(
     () => computePartAvailability(leaderboard),
@@ -91,6 +134,29 @@ export default function App() {
     () => buildLeaderboard(leaderboard, selectedDay, selectedPart),
     [leaderboard, selectedDay, selectedPart]
   );
+
+  const players = useMemo(() => {
+    if (!leaderboard) return [];
+
+    return Object.values(leaderboard.members ?? {})
+      .map((member) => ({
+        id: String(member.id),
+        name: member.name || `Anonymous #${member.id}`,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [leaderboard]);
+
+  const playerSubmissions = useMemo(
+    () => buildPlayerSubmissions(leaderboard, selectedPlayerId, dayNumbers),
+    [leaderboard, selectedPlayerId, dayNumbers]
+  );
+
+  useEffect(() => {
+    if (!leaderboard) return;
+    setSelectedPlayerId(
+      (current) => current || findDefaultPlayerId(leaderboard)
+    );
+  }, [leaderboard]);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -130,6 +196,7 @@ export default function App() {
       setLeaderboard(json);
       setSelectedDay(defaults.day);
       setSelectedPart(defaults.part);
+      setSelectedPlayerId(findDefaultPlayerId(json));
     } catch (err) {
       setError(err.message || "Something went wrong while loading data.");
     } finally {
@@ -142,6 +209,10 @@ export default function App() {
     setSelectedPart(part);
   };
 
+  const selectedPlayerName =
+    players.find((player) => player.id === selectedPlayerId)?.name ??
+    (selectedPlayerId ? `Player #${selectedPlayerId}` : "");
+
   return (
     <main className="app-shell">
       <header className="hero">
@@ -149,8 +220,8 @@ export default function App() {
           <p className="eyebrow">Advent of Code Insights</p>
           <h1>Aoclytic</h1>
           <p className="lede">
-            Explore your private leaderboard by day and part. Enter a year and
-            code to see per-part rankings with completion times.
+            Explore your private leaderboard by day or by player. Enter a year
+            and code to see per-part rankings or every submission for a player.
           </p>
         </div>
       </header>
@@ -192,7 +263,7 @@ export default function App() {
           </label>
 
           <button type="submit" className="primary" disabled={loading}>
-            {loading ? "Loading…" : "Load leaderboard"}
+            {loading ? "Loading..." : "Load leaderboard"}
           </button>
         </form>
         <p className="hint">
@@ -203,94 +274,189 @@ export default function App() {
         {error && <div className="error">{error}</div>}
       </section>
 
-      <section className="layout">
-        <div className="card days">
-          <div className="card-header">
-            <h2>Days</h2>
-            <p>Select a day and part to view its ranking.</p>
-          </div>
-          <div className="day-grid">
-            {dayNumbers.map((day) => {
-              const dayHasData = availability[day];
-              return (
-                <div key={day} className="day-tile">
-                  <div className="day-title">Day {day}</div>
-                  <div className="part-buttons">
-                    {[1, 2].map((part) => {
-                      const isSelected =
-                        selectedDay === day && selectedPart === String(part);
-                      const hasCompletions = dayHasData?.[part];
-
-                      return (
-                        <button
-                          key={part}
-                          type="button"
-                          className={`part-button ${
-                            isSelected ? "active" : ""
-                          } ${hasCompletions ? "has-data" : ""}`}
-                          onClick={() => handlePartSelect(day, String(part))}
-                        >
-                          Part {part}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {availability[day] && (
-                    <p className="availability">
-                      {availability[day][1] || availability[day][2]
-                        ? `${availability[day][1] ? "★" : "✦"} Part 1 · ${
-                            availability[day][2] ? "★" : "✦"
-                          } Part 2`
-                        : "No completions yet"}
-                    </p>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+      <section className="card view-toggle">
+        <div className="card-header">
+          <h2>View</h2>
+          <p>Switch between day rankings and per-player submissions.</p>
         </div>
-
-        <div className="card leaderboard">
-          <div className="card-header">
-            <h2>
-              Day {selectedDay} · Part {selectedPart}
-            </h2>
-            <p>Rankings by completion time.</p>
-          </div>
-          {!leaderboard && (
-            <p className="muted">
-              Load a leaderboard to see per-part rankings here.
-            </p>
-          )}
-          {leaderboard && leaderboardRows.length === 0 && (
-            <p className="muted">No completions yet for this part.</p>
-          )}
-          {leaderboard && leaderboardRows.length > 0 && (
-            <div className="table-wrapper">
-              <table>
-                <thead>
-                  <tr>
-                    <th>#</th>
-                    <th>Participant</th>
-                    <th>ID</th>
-                    <th>Completed</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {leaderboardRows.map((row) => (
-                    <tr key={`${row.id}-${row.rank}`}>
-                      <td>{row.rank}</td>
-                      <td>{row.name}</td>
-                      <td>{row.id}</td>
-                      <td>{row.completedAt}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+        <div className="toggle-buttons">
+          <button
+            type="button"
+            className={`toggle ${viewMode === "days" ? "active" : ""}`}
+            onClick={() => setViewMode("days")}
+          >
+            Days
+          </button>
+          <button
+            type="button"
+            className={`toggle ${viewMode === "players" ? "active" : ""}`}
+            onClick={() => setViewMode("players")}
+          >
+            Players
+          </button>
         </div>
       </section>
+
+      {viewMode === "days" && (
+        <section className="layout">
+          <div className="card days">
+            <div className="card-header">
+              <h2>Days</h2>
+              <p>Select a day and part to view its ranking.</p>
+            </div>
+            <div className="day-grid">
+              {dayNumbers.map((day) => {
+                const dayHasData = availability[day];
+                return (
+                  <div key={day} className="day-tile">
+                    <div className="day-title">Day {day}</div>
+                    <div className="part-buttons">
+                      {[1, 2].map((part) => {
+                        const isSelected =
+                          selectedDay === day && selectedPart === String(part);
+                        const hasCompletions = dayHasData?.[part];
+
+                        return (
+                          <button
+                            key={part}
+                            type="button"
+                            className={`part-button ${
+                              isSelected ? "active" : ""
+                            } ${hasCompletions ? "has-data" : ""}`}
+                            onClick={() => handlePartSelect(day, String(part))}
+                          >
+                            Part {part}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {availability[day] && (
+                      <p className="availability">
+                        {(availability[day][1] ? "★" : "✦") +
+                          " Part 1 / " +
+                          (availability[day][2] ? "★" : "✦") +
+                          " Part 2"}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="card leaderboard">
+            <div className="card-header">
+              <h2>
+                Day {selectedDay} / Part {selectedPart}
+              </h2>
+              <p>Rankings by completion time.</p>
+            </div>
+            {!leaderboard && (
+              <p className="muted">
+                Load a leaderboard to see per-part rankings here.
+              </p>
+            )}
+            {leaderboard && leaderboardRows.length === 0 && (
+              <p className="muted">No completions yet for this part.</p>
+            )}
+            {leaderboard && leaderboardRows.length > 0 && (
+              <div className="table-wrapper">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      <th>Participant</th>
+                      <th>ID</th>
+                      <th>Completed</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {leaderboardRows.map((row) => (
+                      <tr key={`${row.id}-${row.rank}`}>
+                        <td>{row.rank}</td>
+                        <td>{row.name}</td>
+                        <td>{row.id}</td>
+                        <td>{row.completedAt}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
+      {viewMode === "players" && (
+        <section className="layout players-layout">
+          <div className="card players">
+            <div className="card-header">
+              <h2>Players</h2>
+              <p>Select a player to see all their submissions.</p>
+            </div>
+            {!leaderboard && <p className="muted">Load a leaderboard first.</p>}
+            {leaderboard && players.length === 0 && (
+              <p className="muted">No players found.</p>
+            )}
+            {leaderboard && players.length > 0 && (
+              <div className="player-grid">
+                {players.map((player) => (
+                  <button
+                    key={player.id}
+                    type="button"
+                    className={`player-tile ${
+                      selectedPlayerId === player.id ? "active" : ""
+                    }`}
+                    onClick={() => setSelectedPlayerId(player.id)}
+                  >
+                    <span className="player-name">{player.name}</span>
+                    <span className="player-id">#{player.id}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="card submissions">
+            <div className="card-header">
+              <h2>Submissions</h2>
+              <p>
+                {selectedPlayerId
+                  ? `All parts for ${selectedPlayerName}`
+                  : "Pick a player to see their completions."}
+              </p>
+            </div>
+            {selectedPlayerId && playerSubmissions.length === 0 && (
+              <p className="muted">No submissions for this player.</p>
+            )}
+            {!selectedPlayerId && (
+              <p className="muted">Select a player to view their stars.</p>
+            )}
+            {playerSubmissions.length > 0 && (
+              <div className="table-wrapper">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Day</th>
+                      <th>Part</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {playerSubmissions.map((row) => (
+                      <tr key={`${row.day}-${row.part}`}>
+                        <td>Day {row.day}</td>
+                        <td>Part {row.part}</td>
+                        <td>{row.completedAt}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
     </main>
   );
 }
