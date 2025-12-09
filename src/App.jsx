@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 const DEFAULT_YEAR = String(new Date().getFullYear());
 
@@ -122,6 +122,7 @@ export default function App() {
   const [leaderboard, setLeaderboard] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const cacheRef = useRef({});
 
   const dayNumbers = useMemo(() => getDayNumbers(year), [year]);
 
@@ -169,10 +170,28 @@ export default function App() {
       return;
     }
 
+    const proceed = window.confirm(
+      "The Advent of Code API asks clients to avoid hitting this endpoint more than once every 15 minutes. Continue?"
+    );
+    if (!proceed) return;
+
     setLoading(true);
     setLeaderboard(null);
 
     try {
+      const cacheKey = `${year}:${leaderboardCode}`;
+      const cached = cacheRef.current[cacheKey];
+      const FIFTEEN_MIN = 15 * 60 * 1000;
+
+      if (cached && Date.now() - cached.fetchedAt < FIFTEEN_MIN) {
+        const defaults = findDefaultSelection(cached.data);
+        setLeaderboard(cached.data);
+        setSelectedDay(defaults.day);
+        setSelectedPart(defaults.part);
+        setSelectedPlayerId(findDefaultPlayerId(cached.data));
+        return;
+      }
+
       const response = await fetch(
         `/aoc/${year}/leaderboard/private/view/${leaderboardCode}.json`,
         {
@@ -193,6 +212,7 @@ export default function App() {
 
       const json = await response.json();
       const defaults = findDefaultSelection(json);
+      cacheRef.current[cacheKey] = { data: json, fetchedAt: Date.now() };
       setLeaderboard(json);
       setSelectedDay(defaults.day);
       setSelectedPart(defaults.part);
