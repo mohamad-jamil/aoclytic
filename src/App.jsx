@@ -193,7 +193,7 @@ export default function App() {
       }
 
       const response = await fetch(
-        `/aoc/${year}/leaderboard/private/view/${leaderboardCode}.json`,
+        `https://adventofcode.com/${year}/leaderboard/private/view/${leaderboardCode}.json`,
         {
           headers: {
             Accept: "application/json",
